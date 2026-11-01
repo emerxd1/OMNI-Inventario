@@ -4,9 +4,19 @@ const ic = n => `<svg class="i"><use href="#i-${n}"/></svg>`;
 const money = n => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const CATEGORIES = {
+  'Alimentos Esenciales': ['Granos básicos', 'Aceites y grasas', 'Harinas y panadería', 'Lácteos y derivados', 'Huevos'],
+  'Bebidas': ['Gaseosas y jugos', 'Agua y sueros', 'Refrescos en polvo', 'Cervezas y licores', 'Energizantes e isotónicos'],
+  'Snacks y Golosinas': ['Botanas saladas', 'Galletas', 'Confitería y chocolates'],
+  'Alimentos Preparados y Condimentos': ['Enlatados', 'Embutidos', 'Sopas instantáneas', 'Salsas y aderezos', 'Especias y sazonadores'],
+  'Cuidado del Hogar': ['Lavandería', 'Limpieza general', 'Utensilios de limpieza', 'Control de plagas'],
+  'Cuidado Personal': ['Higiene capilar y corporal', 'Higiene oral', 'Cuidado femenino', 'Cuidado del bebé', 'Afeitado y desodorantes', 'Papel higiénico'],
+  'Farmacia Básica': ['Analgésicos y antigripales', 'Salud digestiva', 'Rehidratación', 'Primeros auxilios']
+};
+
 let products = [];
 try { products = JSON.parse(localStorage.getItem(KEY)) || []; } catch { products = []; }
-const state = { filter: 'all', q: '', sort: 'recent', scanner: null, lastScan: '', lastScanAt: 0, flash: null };
+const state = { filter: 'all', q: '', sort: 'recent', cat: '', sub: '', scanner: null, lastScan: '', lastScanAt: 0, flash: null };
 const persist = () => localStorage.setItem(KEY, JSON.stringify(products));
 
 function applyTheme(t) {
@@ -32,7 +42,7 @@ function beep() {
     const o = actx.createOscillator(), g = actx.createGain();
     o.type = 'square'; o.frequency.value = 1040; g.gain.value = .05;
     o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + .1);
-  } catch {}
+  } catch { }
   navigator.vibrate?.(60);
 }
 function confirmDialog(title, text, yes = 'Eliminar') {
@@ -44,6 +54,58 @@ function confirmDialog(title, text, yes = 'Eliminar') {
     d.oncancel = () => res(false);
   });
 }
+
+/* ---------- Categorías: campos del modal y filtro (se crean desde JS) ---------- */
+function buildCategoryUI() {
+  // Campos Categoría y Subcategoría en el modal (clonando el estilo del campo "Nombre")
+  const nameWrap = $('form-name').parentElement;
+  const makeField = (id, label) => {
+    const clone = nameWrap.cloneNode(true);
+    const input = clone.querySelector('input');
+    const sel = document.createElement('select');
+    sel.id = id;
+    sel.className = $('form-status').className;
+    input.replaceWith(sel);
+    const lab = clone.querySelector('label, span');
+    if (lab) { lab.textContent = label; if (lab.hasAttribute('for')) lab.setAttribute('for', id); }
+    return clone;
+  };
+  const catField = makeField('form-category', 'Categoría');
+  const subField = makeField('form-sub', 'Subcategoría');
+  nameWrap.after(catField);
+  catField.after(subField);
+
+  $('form-category').innerHTML = '<option value="">Sin categoría</option>' +
+    Object.keys(CATEGORIES).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  fillSubs('');
+  $('form-category').addEventListener('change', () => fillSubs($('form-category').value));
+
+  // Filtro de categorías junto al selector de orden
+  const f = document.createElement('select');
+  f.id = 'cat-filter';
+  f.className = $('sort').className;
+  f.setAttribute('aria-label', 'Filtrar por categoría');
+  f.innerHTML = '<option value="">Todas las categorías</option>' +
+    Object.entries(CATEGORIES).map(([c, subs]) =>
+      `<optgroup label="${esc(c)}"><option value="${esc(c)}||">${esc(c)} (todas)</option>` +
+      subs.map(s => `<option value="${esc(c)}||${esc(s)}">${esc(s)}</option>`).join('') +
+      '</optgroup>').join('');
+  $('sort').before(f);
+  f.addEventListener('change', e => {
+    const [c, s] = e.target.value.split('||');
+    state.cat = c || ''; state.sub = s || '';
+    render();
+  });
+}
+function fillSubs(cat, selected = '') {
+  const subs = CATEGORIES[cat] || [];
+  const el = $('form-sub');
+  el.innerHTML = '<option value="">Sin subcategoría</option>' +
+    subs.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  el.disabled = !cat;
+  el.value = subs.includes(selected) ? selected : '';
+}
+buildCategoryUI();
 
 const statusOf = (stock, current) => stock <= 0 ? 'Agotado' : (current === 'Agotado' ? 'Activo' : current);
 const profitOf = p => (p.priceSell || 0) - (p.priceBuy || 0);
@@ -57,7 +119,7 @@ function handleCode(raw) {
     persist(); state.flash = code; render(); toast(`${p.name}: stock ${p.stock}`, 'plus');
     return;
   }
-  openModal(p || { barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo' }, !p);
+  openModal(p || { barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '', sub: '' }, !p);
 }
 $('manual-barcode').addEventListener('keydown', e => {
   if (e.key === 'Enter') { handleCode(e.target.value); e.target.value = ''; }
@@ -74,6 +136,8 @@ function openModal(p, nuevo) {
   $('modal-title').textContent = nuevo ? 'Nuevo producto' : 'Editar producto';
   $('form-barcode').value = p.barcode;
   $('form-name').value = p.name || '';
+  $('form-category').value = CATEGORIES[p.category] ? p.category : '';
+  fillSubs($('form-category').value, p.sub || '');
   $('form-price-buy').value = p.priceBuy ?? '';
   $('form-price-sell').value = p.priceSell ?? '';
   $('form-stock').value = p.stock ?? 1;
@@ -103,6 +167,8 @@ function saveProduct() {
   const stock = Math.max(0, parseInt($('form-stock').value) || 0);
   const p = {
     barcode, name,
+    category: $('form-category').value,
+    sub: $('form-sub').value,
     priceBuy: Math.max(0, parseFloat($('form-price-buy').value) || 0),
     priceSell: Math.max(0, parseFloat($('form-price-sell').value) || 0),
     stock, status: statusOf(stock, $('form-status').value),
@@ -122,6 +188,8 @@ function visible() {
   const q = state.q.toLowerCase();
   let list = products.filter(p => {
     if (q && !(p.name.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q))) return false;
+    if (state.cat && p.category !== state.cat) return false;
+    if (state.sub && p.sub !== state.sub) return false;
     if (state.filter === 'all') return true;
     if (state.filter === 'low') return p.stock > 0 && p.stock <= LOW;
     return p.status === state.filter;
@@ -140,8 +208,9 @@ function render() {
   $('product-body').innerHTML = list.map(p => {
     const profit = profitOf(p), pct = p.priceBuy > 0 ? Math.round(profit / p.priceBuy * 100) : null;
     const cls = p.stock <= 0 ? 'zero' : p.stock <= LOW ? 'low' : '';
+    const catLabel = p.category ? (p.sub ? `${p.category} · ${p.sub}` : p.category) : 'Sin categoría';
     return `<tr data-code="${esc(p.barcode)}" class="${state.flash === p.barcode ? 'flash' : ''}">
-      <td class="c-name"><div class="pname">${esc(p.name)}</div><div class="pcode mono">${esc(p.barcode)}</div></td>
+      <td class="c-name"><div class="pname">${esc(p.name)}</div><div class="pcode">${esc(catLabel)}</div></td>
       <td class="c-stock"><div class="stock ${cls}"><button data-act="minus" aria-label="Restar 1">${ic('minus')}</button><span>${p.stock}</span><button data-act="plus" aria-label="Sumar 1">${ic('plus')}</button></div></td>
       <td class="num hide-sm">${money(p.priceBuy)}</td>
       <td class="num c-sell"><b>${money(p.priceSell)}</b>${pct !== null ? `<div class="margin ${profit < 0 ? 'neg' : ''}">${profit >= 0 ? '+' : ''}${pct}%</div>` : ''}</td>
@@ -224,7 +293,7 @@ async function startScanner() {
 async function stopScanner() {
   const s = state.scanner; state.scanner = null;
   $('cam').classList.remove('on'); setCamBtn(false);
-  if (s) { try { await s.stop(); s.clear(); } catch {} }
+  if (s) { try { await s.stop(); s.clear(); } catch { } }
 }
 let torchOn = false;
 $('btn-torch').onclick = async () => {
@@ -237,13 +306,15 @@ $('btn-cam-close').onclick = stopScanner;
 $('btn-export').onclick = () => {
   if (!products.length) return toast('No hay productos para exportar', 'info');
   const rows = products.map(p => ({
-    'Código': p.barcode, 'Producto': p.name, 'Stock': p.stock,
+    'Código': p.barcode, 'Producto': p.name,
+    'Categoría': p.category || '', 'Subcategoría': p.sub || '',
+    'Stock': p.stock,
     'Precio compra': p.priceBuy, 'Precio venta': p.priceSell,
     'Ganancia unidad': +profitOf(p).toFixed(2), 'Estado': p.status,
     'Actualizado': p.date ? new Date(p.date).toLocaleString('es') : ''
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 30 }, { wch: 26 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
   XLSX.writeFile(wb, `OMNI_Inventario_${new Date().toISOString().slice(0, 10)}.xlsx`);
   toast('Excel descargado', 'sheet');
@@ -260,8 +331,13 @@ $('file-import').onchange = async e => {
       const name = String(r['Producto'] ?? r.name ?? '').trim();
       if (!barcode || !name) return;
       const stock = Math.max(0, parseInt(r['Stock'] ?? r.stock) || 0);
+      const category = String(r['Categoría'] ?? r['Categoria'] ?? r.category ?? '').trim();
+      const sub = String(r['Subcategoría'] ?? r['Subcategoria'] ?? r.sub ?? '').trim();
+      const catOk = CATEGORIES[category] ? category : '';
       const p = {
         barcode, name, stock,
+        category: catOk,
+        sub: catOk && CATEGORIES[catOk].includes(sub) ? sub : '',
         priceBuy: parseFloat(r['Precio compra'] ?? r.priceBuy) || 0,
         priceSell: parseFloat(r['Precio venta'] ?? r.priceSell) || 0,
         status: statusOf(stock, ['Activo', 'Inactivo', 'Agotado'].includes(r['Estado']) ? r['Estado'] : 'Activo'),
