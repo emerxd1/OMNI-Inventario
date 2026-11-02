@@ -5,8 +5,8 @@ const money = n => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFract
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* Categorías = IDs de proveedores (sin subcategorías) */
-const CATEGORIES = ['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22'];
-const catLabelOf = c => c ? `Proveedor ${c}` : 'Sin categoría';
+const CATEGORIES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27'];
+const catLabelOf = c => c ? `Categorias ${c}` : 'Sin categoría';
 
 let products = [];
 try { products = JSON.parse(localStorage.getItem(KEY)) || []; } catch { products = []; }
@@ -60,7 +60,7 @@ function buildCategoryUI() {
   sel.className = $('form-status').className;
   input.replaceWith(sel);
   const lab = clone.querySelector('label, span');
-  if (lab) { lab.textContent = 'Categoría (ID proveedor)'; if (lab.hasAttribute('for')) lab.setAttribute('for', 'form-category'); }
+  if (lab) { lab.textContent = 'Categoría (ID Categoria)'; if (lab.hasAttribute('for')) lab.setAttribute('for', 'form-category'); }
   nameWrap.after(clone);
 
   $('form-category').innerHTML = '<option value="">Sin categoría</option>' +
@@ -78,6 +78,21 @@ function buildCategoryUI() {
 }
 buildCategoryUI();
 
+/* ---------- Campos extra: Descripción y Stock mínimo (se crean desde JS) ---------- */
+function buildExtraFields() {
+  const mk = (srcInput, id, label, tweak) => {
+    const wrap = srcInput.parentElement, clone = wrap.cloneNode(true);
+    const input = clone.querySelector('input');
+    input.id = id; input.value = ''; tweak(input);
+    const lab = clone.querySelector('label, span');
+    if (lab) { lab.textContent = label; if (lab.hasAttribute('for')) lab.setAttribute('for', id); }
+    wrap.after(clone);
+  };
+  mk($('form-name'), 'form-description', 'Descripción', i => { i.type = 'text'; i.placeholder = 'Descripción del producto'; i.removeAttribute('required'); });
+  mk($('form-stock'), 'form-stock-min', 'Stock mínimo', i => { i.type = 'number'; i.min = 0; i.placeholder = String(LOW); });
+}
+buildExtraFields();
+
 const statusOf = (stock, current) => stock <= 0 ? 'Agotado' : (current === 'Agotado' ? 'Activo' : current);
 const profitOf = p => (p.priceSell || 0) - (p.priceBuy || 0);
 
@@ -90,7 +105,10 @@ function handleCode(raw) {
     persist(); state.flash = code; render(); toast(`${p.name}: stock ${p.stock}`, 'plus');
     return;
   }
-  openModal(p || { barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '' }, !p);
+  openModal(p || {
+    barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '', $('form-description').value = p.description || '';
+    $('form-stock-min').value = p.stockMin ?? ''
+  }, !p);
 }
 $('manual-barcode').addEventListener('keydown', e => {
   if (e.key === 'Enter') { handleCode(e.target.value); e.target.value = ''; }
@@ -274,8 +292,8 @@ $('btn-cam-close').onclick = stopScanner;
 $('btn-export').onclick = () => {
   if (!products.length) return toast('No hay productos para exportar', 'info');
   const rows = products.map(p => ({
-    'Código': p.barcode, 'Producto': p.name,
-    'Categoría': p.category || '',
+    'Producto': p.name,
+    'Categoria': p.category || '',
     'Stock': p.stock,
     'Precio compra': p.priceBuy, 'Precio venta': p.priceSell,
     'Ganancia unidad': +profitOf(p).toFixed(2), 'Estado': p.status,
@@ -314,4 +332,4 @@ $('file-import').onchange = async e => {
     persist(); render(); toast(`Importado: ${added} nuevos, ${updated} actualizados`, 'upload');
   } catch { toast('No se pudo leer el archivo', 'alert'); }
 };
-render(); 
+render();
