@@ -4,19 +4,13 @@ const ic = n => `<svg class="i"><use href="#i-${n}"/></svg>`;
 const money = n => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const CATEGORIES = {
-  'Alimentos Esenciales': ['Granos básicos', 'Aceites y grasas', 'Harinas y panadería', 'Lácteos y derivados', 'Huevos'],
-  'Bebidas': ['Gaseosas y jugos', 'Agua y sueros', 'Refrescos en polvo', 'Cervezas y licores', 'Energizantes e isotónicos'],
-  'Snacks y Golosinas': ['Botanas saladas', 'Galletas', 'Confitería y chocolates'],
-  'Alimentos Preparados y Condimentos': ['Enlatados', 'Embutidos', 'Sopas instantáneas', 'Salsas y aderezos', 'Especias y sazonadores'],
-  'Cuidado del Hogar': ['Lavandería', 'Limpieza general', 'Utensilios de limpieza', 'Control de plagas'],
-  'Cuidado Personal': ['Higiene capilar y corporal', 'Higiene oral', 'Cuidado femenino', 'Cuidado del bebé', 'Afeitado y desodorantes', 'Papel higiénico'],
-  'Farmacia Básica': ['Analgésicos y antigripales', 'Salud digestiva', 'Rehidratación', 'Primeros auxilios']
-};
+/* Categorías = IDs de proveedores (sin subcategorías) */
+const CATEGORIES = ['6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22'];
+const catLabelOf = c => c ? `Proveedor ${c}` : 'Sin categoría';
 
 let products = [];
 try { products = JSON.parse(localStorage.getItem(KEY)) || []; } catch { products = []; }
-const state = { filter: 'all', q: '', sort: 'recent', cat: '', sub: '', scanner: null, lastScan: '', lastScanAt: 0, flash: null };
+const state = { filter: 'all', q: '', sort: 'recent', cat: '', scanner: null, lastScan: '', lastScanAt: 0, flash: null };
 const persist = () => localStorage.setItem(KEY, JSON.stringify(products));
 
 function applyTheme(t) {
@@ -55,30 +49,22 @@ function confirmDialog(title, text, yes = 'Eliminar') {
   });
 }
 
-/* ---------- Categorías: campos del modal y filtro (se crean desde JS) ---------- */
+/* ---------- Categorías (IDs): campo del modal y filtro (se crean desde JS) ---------- */
 function buildCategoryUI() {
-  // Campos Categoría y Subcategoría en el modal (clonando el estilo del campo "Nombre")
+  // Campo Categoría en el modal (clonando el estilo del campo "Nombre")
   const nameWrap = $('form-name').parentElement;
-  const makeField = (id, label) => {
-    const clone = nameWrap.cloneNode(true);
-    const input = clone.querySelector('input');
-    const sel = document.createElement('select');
-    sel.id = id;
-    sel.className = $('form-status').className;
-    input.replaceWith(sel);
-    const lab = clone.querySelector('label, span');
-    if (lab) { lab.textContent = label; if (lab.hasAttribute('for')) lab.setAttribute('for', id); }
-    return clone;
-  };
-  const catField = makeField('form-category', 'Categoría');
-  const subField = makeField('form-sub', 'Subcategoría');
-  nameWrap.after(catField);
-  catField.after(subField);
+  const clone = nameWrap.cloneNode(true);
+  const input = clone.querySelector('input');
+  const sel = document.createElement('select');
+  sel.id = 'form-category';
+  sel.className = $('form-status').className;
+  input.replaceWith(sel);
+  const lab = clone.querySelector('label, span');
+  if (lab) { lab.textContent = 'Categoría (ID proveedor)'; if (lab.hasAttribute('for')) lab.setAttribute('for', 'form-category'); }
+  nameWrap.after(clone);
 
   $('form-category').innerHTML = '<option value="">Sin categoría</option>' +
-    Object.keys(CATEGORIES).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-  fillSubs('');
-  $('form-category').addEventListener('change', () => fillSubs($('form-category').value));
+    CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
 
   // Filtro de categorías junto al selector de orden
   const f = document.createElement('select');
@@ -86,24 +72,9 @@ function buildCategoryUI() {
   f.className = $('sort').className;
   f.setAttribute('aria-label', 'Filtrar por categoría');
   f.innerHTML = '<option value="">Todas las categorías</option>' +
-    Object.entries(CATEGORIES).map(([c, subs]) =>
-      `<optgroup label="${esc(c)}"><option value="${esc(c)}||">${esc(c)} (todas)</option>` +
-      subs.map(s => `<option value="${esc(c)}||${esc(s)}">${esc(s)}</option>`).join('') +
-      '</optgroup>').join('');
+    CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   $('sort').before(f);
-  f.addEventListener('change', e => {
-    const [c, s] = e.target.value.split('||');
-    state.cat = c || ''; state.sub = s || '';
-    render();
-  });
-}
-function fillSubs(cat, selected = '') {
-  const subs = CATEGORIES[cat] || [];
-  const el = $('form-sub');
-  el.innerHTML = '<option value="">Sin subcategoría</option>' +
-    subs.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  el.disabled = !cat;
-  el.value = subs.includes(selected) ? selected : '';
+  f.addEventListener('change', e => { state.cat = e.target.value; render(); });
 }
 buildCategoryUI();
 
@@ -119,7 +90,7 @@ function handleCode(raw) {
     persist(); state.flash = code; render(); toast(`${p.name}: stock ${p.stock}`, 'plus');
     return;
   }
-  openModal(p || { barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '', sub: '' }, !p);
+  openModal(p || { barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '' }, !p);
 }
 $('manual-barcode').addEventListener('keydown', e => {
   if (e.key === 'Enter') { handleCode(e.target.value); e.target.value = ''; }
@@ -136,8 +107,7 @@ function openModal(p, nuevo) {
   $('modal-title').textContent = nuevo ? 'Nuevo producto' : 'Editar producto';
   $('form-barcode').value = p.barcode;
   $('form-name').value = p.name || '';
-  $('form-category').value = CATEGORIES[p.category] ? p.category : '';
-  fillSubs($('form-category').value, p.sub || '');
+  $('form-category').value = CATEGORIES.includes(p.category) ? p.category : '';
   $('form-price-buy').value = p.priceBuy ?? '';
   $('form-price-sell').value = p.priceSell ?? '';
   $('form-stock').value = p.stock ?? 1;
@@ -168,7 +138,6 @@ function saveProduct() {
   const p = {
     barcode, name,
     category: $('form-category').value,
-    sub: $('form-sub').value,
     priceBuy: Math.max(0, parseFloat($('form-price-buy').value) || 0),
     priceSell: Math.max(0, parseFloat($('form-price-sell').value) || 0),
     stock, status: statusOf(stock, $('form-status').value),
@@ -189,7 +158,6 @@ function visible() {
   let list = products.filter(p => {
     if (q && !(p.name.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q))) return false;
     if (state.cat && p.category !== state.cat) return false;
-    if (state.sub && p.sub !== state.sub) return false;
     if (state.filter === 'all') return true;
     if (state.filter === 'low') return p.stock > 0 && p.stock <= LOW;
     return p.status === state.filter;
@@ -208,7 +176,7 @@ function render() {
   $('product-body').innerHTML = list.map(p => {
     const profit = profitOf(p), pct = p.priceBuy > 0 ? Math.round(profit / p.priceBuy * 100) : null;
     const cls = p.stock <= 0 ? 'zero' : p.stock <= LOW ? 'low' : '';
-    const catLabel = p.category ? (p.sub ? `${p.category} · ${p.sub}` : p.category) : 'Sin categoría';
+    const catLabel = CATEGORIES.includes(p.category) ? catLabelOf(p.category) : 'Sin categoría';
     return `<tr data-code="${esc(p.barcode)}" class="${state.flash === p.barcode ? 'flash' : ''}">
       <td class="c-name"><div class="pname">${esc(p.name)}</div><div class="pcode">${esc(catLabel)}</div></td>
       <td class="c-stock"><div class="stock ${cls}"><button data-act="minus" aria-label="Restar 1">${ic('minus')}</button><span>${p.stock}</span><button data-act="plus" aria-label="Sumar 1">${ic('plus')}</button></div></td>
@@ -307,14 +275,14 @@ $('btn-export').onclick = () => {
   if (!products.length) return toast('No hay productos para exportar', 'info');
   const rows = products.map(p => ({
     'Código': p.barcode, 'Producto': p.name,
-    'Categoría': p.category || '', 'Subcategoría': p.sub || '',
+    'Categoría': p.category || '',
     'Stock': p.stock,
     'Precio compra': p.priceBuy, 'Precio venta': p.priceSell,
     'Ganancia unidad': +profitOf(p).toFixed(2), 'Estado': p.status,
     'Actualizado': p.date ? new Date(p.date).toLocaleString('es') : ''
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 30 }, { wch: 26 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
   XLSX.writeFile(wb, `OMNI_Inventario_${new Date().toISOString().slice(0, 10)}.xlsx`);
   toast('Excel descargado', 'sheet');
@@ -331,13 +299,10 @@ $('file-import').onchange = async e => {
       const name = String(r['Producto'] ?? r.name ?? '').trim();
       if (!barcode || !name) return;
       const stock = Math.max(0, parseInt(r['Stock'] ?? r.stock) || 0);
-      const category = String(r['Categoría'] ?? r['Categoria'] ?? r.category ?? '').trim();
-      const sub = String(r['Subcategoría'] ?? r['Subcategoria'] ?? r.sub ?? '').trim();
-      const catOk = CATEGORIES[category] ? category : '';
+      const rawCat = String(r['Categoría'] ?? r['Categoria'] ?? r.category ?? '').trim();
       const p = {
         barcode, name, stock,
-        category: catOk,
-        sub: catOk && CATEGORIES[catOk].includes(sub) ? sub : '',
+        category: CATEGORIES.includes(rawCat) ? rawCat : '',
         priceBuy: parseFloat(r['Precio compra'] ?? r.priceBuy) || 0,
         priceSell: parseFloat(r['Precio venta'] ?? r.priceSell) || 0,
         status: statusOf(stock, ['Activo', 'Inactivo', 'Agotado'].includes(r['Estado']) ? r['Estado'] : 'Activo'),
@@ -349,4 +314,4 @@ $('file-import').onchange = async e => {
     persist(); render(); toast(`Importado: ${added} nuevos, ${updated} actualizados`, 'upload');
   } catch { toast('No se pudo leer el archivo', 'alert'); }
 };
-render();
+render(); 
