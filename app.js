@@ -10,6 +10,10 @@ const catLabelOf = c => c ? `Categorias ${c}` : 'Sin categoría';
 
 let products = [];
 try { products = JSON.parse(localStorage.getItem(KEY)) || []; } catch { products = []; }
+// IdProducto: asigna ID a los productos que aún no lo tienen
+const nextId = () => products.reduce((m, p) => Math.max(m, p.id || 0), 0) + 1;
+products.forEach(p => { if (!p.id) p.id = nextId(); });
+const minOf = p => (p.stockMin === '' || p.stockMin == null) ? LOW : p.stockMin;
 const state = { filter: 'all', q: '', sort: 'recent', cat: '', scanner: null, lastScan: '', lastScanAt: 0, flash: null };
 const persist = () => localStorage.setItem(KEY, JSON.stringify(products));
 
@@ -106,8 +110,7 @@ function handleCode(raw) {
     return;
   }
   openModal(p || {
-    barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: '', $('form-description').value = p.description || '';
-    $('form-stock-min').value = p.stockMin ?? ''
+    barcode: code, name: '', priceBuy: '', priceSell: '', stock: 1, status: 'Activo', category: ''
   }, !p);
 }
 $('manual-barcode').addEventListener('keydown', e => {
@@ -130,6 +133,8 @@ function openModal(p, nuevo) {
   $('form-price-sell').value = p.priceSell ?? '';
   $('form-stock').value = p.stock ?? 1;
   $('form-status').value = p.status || 'Activo';
+  $('form-description').value = p.description || '';
+  $('form-stock-min').value = p.stockMin ?? '';
   calcProfit();
   $('product-modal').showModal();
   setTimeout(() => $('form-name').focus(), 50);
@@ -153,12 +158,18 @@ function saveProduct() {
   const name = $('form-name').value.trim();
   if (!name) { toast('El nombre es obligatorio', 'alert'); $('form-name').focus(); return; }
   const stock = Math.max(0, parseInt($('form-stock').value) || 0);
+  const old = products.find(x => x.barcode === barcode);
+  const smin = parseInt($('form-stock-min').value);
   const p = {
+    id: old?.id || nextId(),
     barcode, name,
+    description: $('form-description').value.trim(),
     category: $('form-category').value,
     priceBuy: Math.max(0, parseFloat($('form-price-buy').value) || 0),
     priceSell: Math.max(0, parseFloat($('form-price-sell').value) || 0),
-    stock, status: statusOf(stock, $('form-status').value),
+    stock, stockMin: isNaN(smin) ? LOW : Math.max(0, smin),
+    status: statusOf(stock, $('form-status').value),
+    created: old?.created || new Date().toISOString(),
     date: new Date().toISOString()
   };
   const i = products.findIndex(x => x.barcode === barcode);
@@ -177,7 +188,7 @@ function visible() {
     if (q && !(p.name.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q))) return false;
     if (state.cat && p.category !== state.cat) return false;
     if (state.filter === 'all') return true;
-    if (state.filter === 'low') return p.stock > 0 && p.stock <= LOW;
+    if (state.filter === 'low') return p.stock > 0 && p.stock <= minOf(p);
     return p.status === state.filter;
   });
   const sorts = {
@@ -193,7 +204,7 @@ function render() {
   const list = visible();
   $('product-body').innerHTML = list.map(p => {
     const profit = profitOf(p), pct = p.priceBuy > 0 ? Math.round(profit / p.priceBuy * 100) : null;
-    const cls = p.stock <= 0 ? 'zero' : p.stock <= LOW ? 'low' : '';
+    const cls = p.stock <= 0 ? 'zero' : p.stock <= minOf(p) ? 'low' : '';
     const catLabel = CATEGORIES.includes(p.category) ? catLabelOf(p.category) : 'Sin categoría';
     return `<tr data-code="${esc(p.barcode)}" class="${state.flash === p.barcode ? 'flash' : ''}">
       <td class="c-name"><div class="pname">${esc(p.name)}</div><div class="pcode">${esc(catLabel)}</div></td>
@@ -219,7 +230,7 @@ function render() {
   $('s-units').textContent = units.toLocaleString('en-US');
   $('s-cost').textContent = money(cost).replace(/\.00$/, '');
   $('s-profit').textContent = money(prof).replace(/\.00$/, '');
-  const low = products.filter(p => p.stock > 0 && p.stock <= LOW).length;
+  const low = products.filter(p => p.stock > 0 && p.stock <= minOf(p)).length;
   $('total-count').textContent = `Mostrando ${list.length} de ${products.length}` + (low ? ` · ${low} con stock bajo` : '');
 }
 $('product-body').addEventListener('click', async e => {
@@ -292,15 +303,20 @@ $('btn-cam-close').onclick = stopScanner;
 $('btn-export').onclick = () => {
   if (!products.length) return toast('No hay productos para exportar', 'info');
   const rows = products.map(p => ({
-    'Producto': p.name,
-    'Categoria': p.category || '',
+    'IdProducto': p.id,
+    'Nombre': p.name,
+    'Descripcion': p.description || '',
+    'IdCategoria': p.category || '',
     'Stock': p.stock,
-    'Precio compra': p.priceBuy, 'Precio venta': p.priceSell,
-    'Ganancia unidad': +profitOf(p).toFixed(2), 'Estado': p.status,
-    'Actualizado': p.date ? new Date(p.date).toLocaleString('es') : ''
+    'PrecioCompra': p.priceBuy,
+    'PrecioVenta': p.priceSell,
+    'Estado': p.status,
+    'FechaRegistro': (p.created || p.date) ? new Date(p.created || p.date).toLocaleString('es') : '',
+    'Codigo': p.barcode,
+    'StockMinimo': minOf(p)
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 11 }, { wch: 28 }, { wch: 36 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 12 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
   XLSX.writeFile(wb, `OMNI_Inventario_${new Date().toISOString().slice(0, 10)}.xlsx`);
   toast('Excel descargado', 'sheet');
@@ -313,17 +329,24 @@ $('file-import').onchange = async e => {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
     let added = 0, updated = 0;
     rows.forEach(r => {
-      const barcode = String(r['Código'] ?? r['Codigo'] ?? r.barcode ?? '').trim();
-      const name = String(r['Producto'] ?? r.name ?? '').trim();
+      const barcode = String(r['Codigo'] ?? r['Código'] ?? r.barcode ?? '').trim();
+      const name = String(r['Nombre'] ?? r['Producto'] ?? r.name ?? '').trim();
       if (!barcode || !name) return;
       const stock = Math.max(0, parseInt(r['Stock'] ?? r.stock) || 0);
-      const rawCat = String(r['Categoría'] ?? r['Categoria'] ?? r.category ?? '').trim();
+      const rawCat = String(r['IdCategoria'] ?? r['Categoria'] ?? r['Categoría'] ?? r.category ?? '').trim();
+      const smin = parseInt(r['StockMinimo'] ?? r.stockMin);
+      const old = products.find(x => x.barcode === barcode);
+      const est = r['Estado'];
       const p = {
+        id: old?.id || nextId(),
         barcode, name, stock,
+        description: String(r['Descripcion'] ?? r['Descripción'] ?? r.description ?? '').trim(),
         category: CATEGORIES.includes(rawCat) ? rawCat : '',
-        priceBuy: parseFloat(r['Precio compra'] ?? r.priceBuy) || 0,
-        priceSell: parseFloat(r['Precio venta'] ?? r.priceSell) || 0,
-        status: statusOf(stock, ['Activo', 'Inactivo', 'Agotado'].includes(r['Estado']) ? r['Estado'] : 'Activo'),
+        priceBuy: parseFloat(r['PrecioCompra'] ?? r['Precio compra'] ?? r.priceBuy) || 0,
+        priceSell: parseFloat(r['PrecioVenta'] ?? r['Precio venta'] ?? r.priceSell) || 0,
+        stockMin: isNaN(smin) ? LOW : smin,
+        status: statusOf(stock, ['Activo', 'Inactivo', 'Agotado'].includes(est) ? est : 'Activo'),
+        created: old?.created || new Date().toISOString(),
         date: new Date().toISOString()
       };
       const i = products.findIndex(x => x.barcode === barcode);
